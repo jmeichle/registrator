@@ -53,7 +53,7 @@ func main() {
 		assert(errors.New("-ttl must be greater than -ttl-refresh"))
 	}
 
-	docker, err := dockerapi.NewClient(getopt("DOCKER_HOST", "unix:///tmp/docker.sock"))
+	docker, err := dockerapi.NewClient(getopt("DOCKER_HOST", "unix:///var/run/docker.sock"))
 	assert(err)
 
 	if *deregister != "always" && *deregister != "on-success" {
