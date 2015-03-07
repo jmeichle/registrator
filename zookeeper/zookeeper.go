@@ -4,7 +4,7 @@ import (
 	"log"
 	"net/url"
 	"strconv"
-	"fmt"
+	// "fmt"
 	"time"
 	"encoding/json"
 
@@ -67,7 +67,7 @@ type ZnodeBody struct {
 }
 
 func (r *ZkClient) Register(service *bridge.Service) error {
-	fmt.Printf("Here is service: %+v\n", service)
+	// fmt.Printf("Here is service: %+v\n", service)
 	privatePort, _ := strconv.Atoi(service.Origin.ExposedPort)
 	acl := zk.WorldACL(zk.PermAll)
 	exists, _, err := r.client.Exists(r.path + "/" + service.Name)
@@ -76,7 +76,7 @@ func (r *ZkClient) Register(service *bridge.Service) error {
 	}
 
 	if (! exists) {
-		log.Println("zookeeper: creating service base path: " + r.path + "/" + service.Name)
+		log.Println("zookeeper: creating service base path: " + r.path + "/" + service.Origin.ContainerHostname)
 		r.client.Create(r.path + "/containers/" + service.Origin.ContainerHostname, []byte{}, 0, acl)
 	}
 
@@ -94,13 +94,21 @@ func (r *ZkClient) Register(service *bridge.Service) error {
 }
 
 func (r *ZkClient) Deregister(service *bridge.Service) error {
-	path := r.path + "/containers/" + service.Origin.ContainerHostname + "/" + service.Origin.ExposedPort
-	log.Println("degregister path: " + path)
-	err := r.client.Delete(path, -1) // -1 means latest version number
+	basePath := r.path + "/containers/" + service.Origin.ContainerHostname
+	servicePath := basePath + "/" + service.Origin.ExposedPort
+	log.Println("deregister container service path: " + servicePath)
+	err := r.client.Delete(servicePath, -1) // -1 means latest version number
 	if err != nil {
 		log.Println("zookeeper: failed to deregister service:", err)
 	}
-	children, _, err := conn.Children(r.path + "/containers/" + service.Origin.ContainerHostname)
+	children, _, err := r.client.Children(basePath)
+	if len(children) == 0 {
+		log.Println("zookeeper: deregister empty container path: " + basePath)
+		err := r.client.Delete(basePath, -1)
+		if err != nil {
+			log.Println("zookeeper: failed to delete container path: ", err)
+		}
+	}
 	return err
 }
 
