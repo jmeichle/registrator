@@ -7,6 +7,8 @@ import (
 	"time"
 	"encoding/json"
 
+	"fmt"
+
 	"github.com/samuel/go-zookeeper/zk"
 	"github.com/gliderlabs/registrator/bridge"
 )
@@ -69,6 +71,7 @@ type ZnodeBody struct {
 	IP string
 	PublicPort int
 	PrivatePort int
+	ContainerID string
 	Tags []string
 	Attrs map[string]string
 }
@@ -108,61 +111,57 @@ func (r *ZkClient) Register(service *bridge.Service) error {
 		r.client.Create(r.path + "/containers/" + service.Origin.ContainerHostname, []byte{}, 0, acl)
 	}
 
-	zbody := &ZnodeBody{Name: service.Name, IP: service.IP, PublicPort: service.Port, PrivatePort: privatePort, Tags: service.Tags, Attrs: service.Attrs}
+	zbody := &ZnodeBody{Name: service.Name, IP: service.IP, PublicPort: service.Port, PrivatePort: privatePort, Tags: service.Tags, Attrs: service.Attrs, ContainerID: service.Origin.ContainerHostname}
 	body, err  := json.Marshal(zbody)
 	if err != nil {
 		log.Println("zookeeper: failed to json encode znode body:", err)
 	}
 
-	path := r.path + "/containers/" + service.Origin.ContainerHostname + "/" + service.Origin.ExposedPort
+	path := r.path + "/containers/" + service.Origin.ContainerHostname + "/" + service.Name
 	r.client.Create(path, body, 1, acl) // 1 == ephemeral
 
 	for _,tag := range service.Tags {
-		basePath := r.path + "/services/" + tag
-		r.client.Create(basePath, []byte{}, 0, acl)
-		servicePath := basePath + "/" + service.Origin.ExposedPort
-		r.client.Create(servicePath, body, 1, acl) // 1 == ephemeral
+		// format is /services/ + tag + / + uuid + / subpath + "/" 
+		fmt.Println("yay")
+
+
+		if service.Attrs["service_subpath"] != "" {
+			if service.Attrs["service_uuid"] != "" {
+				baseServicePath := r.path + "/services/" + tag + "/" + service.Attrs["service_uuid"] + "/" + service.Attrs["service_subpath"]
+				fmt.Println("Trying to create: " + baseServicePath)
+				r.client.Create(baseServicePath + "/actor", body, 3, acl) // 1 == ephemeral, 2 == sequential, so 3 == both
+			}
+		}
 	}
 	return nil
 }
 
 func (r *ZkClient) Deregister(service *bridge.Service) error {
 	basePath := r.path + "/containers/" + service.Origin.ContainerHostname
-	servicePath := basePath + "/" + service.Origin.ExposedPort
+	servicePath := basePath + "/" + service.Name
 	err := r.client.Delete(servicePath, -1)
 	if err != nil {
 		log.Println("zookeeper: failed to deregister service:", err)
 	}
 
-	err = r.client.Delete(servicePath, -1) // -1 means latest version number
 	for _,tag := range service.Tags {
-		tagPath := r.path + "/services/" + tag + "/" + service.Origin.ExposedPort
-		r.deleteNodeIfExists(tagPath)
-	}
-	children, _, err := r.client.Children(basePath)
-	if len(children) == 0 {
-		log.Println("zookeeper: deregister empty container path: " + basePath)
-		r.deleteNodeIfExists(basePath)
-	}
-	for _,tag := range service.Tags {
-		tagPath := r.path + "/services/" + tag
-		tagServicePath := tagPath + "/" + service.Origin.ExposedPort
-		children, _, err := r.client.Children(tagServicePath)
-		if err != nil {
-			log.Println("zookeeper: r.Client.Children failed: ", err)
+		tagPath := r.path + "/services/" + tag + "/" + service.Attrs["service_uuid"] + "/" + service.Attrs["service_subpath"]
+		children, _, _ := r.client.Children(tagPath)
+		for _, child := range children {
+			bodyJson, _, _ := r.client.Get(tagPath + "/" + child)
+			childNode := new(ZnodeBody)
+			json.Unmarshal(bodyJson, &childNode)
+			// We prob dont have to iterate but why not?
+			if childNode.ContainerID == service.Origin.ContainerHostname {
+				err := r.client.Delete(tagPath + "/" + child, -1)
+				if err != nil {
+					log.Println("zookeeper: failed to deregister: " + tagPath + "/" + child)
+				}
+			}
 		}
-		if len(children) == 0 {
-			log.Println("zookeeper: deregister empty container path: " + tagServicePath)
-			r.deleteNodeIfExists(tagServicePath)
-		}
-		children, _, err = r.client.Children(tagPath)
-		if err != nil {
-			log.Println("zookeeper: r.Client.Children failed: ", err)
-		}
-		if len(children) == 0 {
-			log.Println("zookeeper: deregister empty container path: " + tagPath)
-			r.deleteNodeIfExists(tagPath)
-		}
+
+		// fmt.Println("Removing tagPath: " + tagPath)
+		// r.deleteNodeIfExists(tagPath)
 	}
 
 	return err
