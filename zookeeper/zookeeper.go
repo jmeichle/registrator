@@ -123,8 +123,6 @@ func (r *ZkClient) Register(service *bridge.Service) error {
 	for _,tag := range service.Tags {
 		// format is /services/ + tag + / + uuid + / subpath + "/" 
 		fmt.Println("yay")
-
-
 		if service.Attrs["service_subpath"] != "" {
 			if service.Attrs["service_uuid"] != "" {
 				baseServicePath := r.path + "/services/" + tag + "/" + service.Attrs["service_uuid"] + "/" + service.Attrs["service_subpath"]
@@ -143,7 +141,13 @@ func (r *ZkClient) Deregister(service *bridge.Service) error {
 	if err != nil {
 		log.Println("zookeeper: failed to deregister service:", err)
 	}
-
+	children, _, _ := r.client.Children(basePath)
+	if len(children) == 0 {
+		err := r.client.Delete(basePath, -1)
+		if err != nil {
+			log.Println("zookeeper: failed to deregister service:", err)
+		}		
+	}
 	for _,tag := range service.Tags {
 		tagPath := r.path + "/services/" + tag + "/" + service.Attrs["service_uuid"] + "/" + service.Attrs["service_subpath"]
 		children, _, _ := r.client.Children(tagPath)
@@ -159,9 +163,6 @@ func (r *ZkClient) Deregister(service *bridge.Service) error {
 				}
 			}
 		}
-
-		// fmt.Println("Removing tagPath: " + tagPath)
-		// r.deleteNodeIfExists(tagPath)
 	}
 
 	return err
